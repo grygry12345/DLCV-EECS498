@@ -11,6 +11,7 @@ from torch import nn
 from torch.nn import functional as F
 from torchvision import models
 from torchvision.models import feature_extraction
+from torchvision.transforms.transforms import Scale
 
 
 def hello_common():
@@ -75,7 +76,21 @@ class DetectorBackboneWithFPN(nn.Module):
         self.fpn_params = nn.ModuleDict()
 
         # Replace "pass" statement with your code
-        pass
+        # m3/4/5 for reducing channel dimensions
+        self.fpn_params['m3'] = nn.Conv2d(dummy_out_shapes[0][1][1], out_channels, 
+                                  kernel_size=1, stride=1, padding=0)
+        self.fpn_params['m4'] = nn.Conv2d(dummy_out_shapes[1][1][1], out_channels, 
+                                  kernel_size=1, stride=1, padding=0)
+        self.fpn_params['m5'] = nn.Conv2d(dummy_out_shapes[2][1][1], out_channels, 
+                                  kernel_size=1, stride=1, padding=0)
+
+        # p3/4/5 generate final feature map, reduce aliasing effect of upsampling
+        self.fpn_params['p3'] = nn.Conv2d(out_channels, out_channels,
+                                  kernel_size=3, stride=1, padding=1)
+        self.fpn_params['p4'] = nn.Conv2d(out_channels, out_channels,
+                                  kernel_size=3, stride=1, padding=1)
+        self.fpn_params['p5'] = nn.Conv2d(out_channels, out_channels,
+                                  kernel_size=3, stride=1, padding=1)                
         ################################################################
         #                      END OF YOUR CODE                        #
         ################################################################
@@ -102,7 +117,16 @@ class DetectorBackboneWithFPN(nn.Module):
         ######################################################################
 
         # Replace "pass" statement with your code
-        pass
+        m5 = self.fpn_params['m5'](backbone_feats['c5']) # 1*1 conv
+        m4 = self.fpn_params['m4'](backbone_feats['c4']) # 1*1 conv
+        m3 = self.fpn_params['m3'](backbone_feats['c3']) # 1*1 conv
+        m5_unsampled = F.interpolate(m5, (m4.shape[2], m4.shape[3]), mode='nearest')
+        m4 += m5_unsampled # m4 + unsampled m5
+        m4_unsampled = F.interpolate(m4, (m3.shape[2], m3.shape[3]), mode='nearest')
+        m3 += m4_unsampled
+        fpn_feats['p5'] = self.fpn_params['p5'](m5) # 3*3 conv
+        fpn_feats['p4'] = self.fpn_params['p4'](m4) # 3*3 conv
+        fpn_feats['p3'] = self.fpn_params['p3'](m3) # 3*3 conv
         ################################################################
         #                      END OF YOUR CODE                        #
         ################################################################
@@ -148,7 +172,14 @@ def get_fpn_location_coords(
         # TODO: Implement logic to get location co-ordinates below.          #
         ######################################################################
         # Replace "pass" statement with your code
-        pass
+        H = feat_shape[2]
+        W = feat_shape[3]
+        x = torch.arange(0.5, W + 0.5, step=1, dtype=dtype, device=device) * level_stride
+        y = torch.arange(0.5, H + 0.5, step=1, dtype=dtype, device=device) * level_stride
+        (grid_x, grid_y) = torch.meshgrid(x, y, indexing='xy')
+        grid_x = grid_x.unsqueeze(dim=-1)
+        grid_y = grid_y.unsqueeze(dim=-1)
+        location_coords[level_name] = torch.cat((grid_x, grid_y), dim=2).view(H*W, 2)
         ######################################################################
         #                             END OF YOUR CODE                       #
         ######################################################################
@@ -162,7 +193,7 @@ def nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float = 0.5):
     Args:
         boxes: Tensor of shape (N, 4) giving top-left and bottom-right coordinates
             of the bounding boxes to perform NMS on.
-        scores: Tensor of shpe (N, ) giving scores for each of the boxes.
+        scores: Tensor of shape (N, ) giving scores for each of the boxes.
         iou_threshold: Discard all overlapping boxes with IoU > iou_threshold
 
     Returns:
@@ -177,17 +208,58 @@ def nms(boxes: torch.Tensor, scores: torch.Tensor, iou_threshold: float = 0.5):
     keep = None
     #############################################################################
     # TODO: Implement non-maximum suppression which iterates the following:     #
-    #       1. Select the highest-scoring box among the remaining ones,         #
+    #       1. Select the highest-scoring box among the intering ones,         #
     #          which has not been chosen in this step before                    #
     #       2. Eliminate boxes with IoU > threshold                             #
-    #       3. If any boxes remain, GOTO 1                                      #
+    #       3. If any boxes inter, GOTO 1                                      #
     #       Your implementation should not depend on a specific device type;    #
     #       you can use the device of the input if necessary.                   #
     # HINT: You can refer to the torchvision library code:                      #
     # github.com/pytorch/vision/blob/main/torchvision/csrc/ops/cpu/nms_kernel.cpp
     #############################################################################
     # Replace "pass" statement with your code
-    pass
+    if boxes.numel() == 0:
+      return keep
+
+    keep = [] # a list, convert to python long at last
+    x1, y1, x2, y2 = boxes[:, :4].unbind(dim=1)
+    area = torch.mul(x2 - x1, y2 - y1) # area of each boxes
+    _, index = scores.sort(0) # sort the score in ascending order
+
+    count = 0
+    while index.numel() > 0:
+      # keep the highest-scoring box and remove that from the index list
+      largest_idx = index[-1]
+      keep.append(largest_idx)
+      count += 1
+      index = index[:-1]
+      
+      # if no more box remaining, break
+      if index.size(0) == 0:
+        break
+
+      # get the x1,y1,x2,y2 of all the remaining boxes, and clamp them so that
+      # we get the coord of intersection of boxes and highest-scoring box
+      x1_inter = torch.index_select(x1, 0, index).clamp(min=x1[largest_idx])
+      y1_inter = torch.index_select(y1, 0, index).clamp(min=y1[largest_idx])
+      x2_inter = torch.index_select(x2, 0, index).clamp(max=x2[largest_idx])
+      y2_inter = torch.index_select(y2, 0, index).clamp(max=y2[largest_idx])
+
+      # clamp the width and height, get the intersect area
+      W_inter = (x2_inter - x1_inter).clamp(min=0.0)
+      H_inter = (y2_inter - y1_inter).clamp(min=0.0)
+      inter_area = W_inter * H_inter
+
+      # retrieve the areas of all the remaining boxes, and get the union area 
+      areas = torch.index_select(area, 0, index)
+      union_area = (areas - inter_area) + area[largest_idx]
+
+      # keep the boxes that have IoU <= iou_threshold
+      IoU = inter_area / union_area
+      index = index[IoU.le(iou_threshold)]
+
+    # convert list to torch.long
+    keep = torch.Tensor(keep).to(device=scores.device).long()
     #############################################################################
     #                              END OF YOUR CODE                             #
     #############################################################################
