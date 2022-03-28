@@ -98,8 +98,16 @@ class FCOSPredictionNetwork(nn.Module):
 
         # Replace "pass" statement with your code
         self.pred_cls = nn.Conv2d(prev_out, num_classes, kernel_size=3, stride=1, padding=1)
+        nn.init.normal_(self.pred_cls.weight, 0, 0.01)
+        nn.init.constant_(self.pred_cls.bias, 0)
+        
         self.pred_box = nn.Conv2d(prev_out, 4, kernel_size=3, stride=1, padding=1)
+        nn.init.normal_(self.pred_box.weight, 0, 0.01)
+        nn.init.constant_(self.pred_box.bias, 0)
+        
         self.pred_ctr = nn.Conv2d(prev_out, 1, kernel_size=3, stride=1, padding=1)
+        nn.init.normal_(self.pred_ctr.weight, 0, 0.01)
+        nn.init.constant_(self.pred_ctr.bias, 0)
         ######################################################################
         #                           END OF YOUR CODE                         #
         ######################################################################
@@ -497,25 +505,38 @@ class FCOS(nn.Module):
         # List of dictionaries with keys {"p3", "p4", "p5"} giving matched
         # boxes for locations per FPN level, per image. Fill this list:
         matched_gt_boxes = []
-        # Replace "pass" statement with your code
-        for batch in range(gt_boxes.shape[0]):
-          matched_gt_boxes_batch = {}
-          matched_boxes_per_fpn_level = fcos_match_locations_to_gt(
-            locations_per_fpn_level, self.backbone.fpn_strides, gt_boxes[batch])
-          for level_name, matched_boxes in matched_boxes_per_fpn_level.items():
-            matched_gt_boxes_batch[level_name] = matched_boxes
-          matched_gt_boxes.append(matched_gt_boxes_batch)
 
         # Calculate GT deltas for these matched boxes. Similar structure
         # as `matched_gt_boxes` above. Fill this list:
         matched_gt_deltas = []
+
         # Replace "pass" statement with your code
         for batch in range(gt_boxes.shape[0]):
+          matched_gt_boxes_batch = {}
           matched_gt_deltas_batch = {}
-          for level_name, locations in locations_per_fpn_level.items():
+          matched_boxes_per_fpn_level = fcos_match_locations_to_gt(
+            locations_per_fpn_level, self.backbone.fpn_strides, gt_boxes[batch])
+
+          for level_name, matched_boxes in matched_boxes_per_fpn_level.items():
+            matched_gt_boxes_batch[level_name] = matched_boxes
             matched_gt_deltas_batch[level_name] = fcos_get_deltas_from_locations(
-              locations, matched_gt_boxes[batch][level_name], self.backbone.fpn_strides[level_name])
+              locations_per_fpn_level[level_name], matched_boxes, self.backbone.fpn_strides[level_name])
+
+          matched_gt_boxes.append(matched_gt_boxes_batch)
           matched_gt_deltas.append(matched_gt_deltas_batch)
+
+          # for level_name, locations in locations_per_fpn_level.items():
+          #   matched_gt_deltas_batch[level_name] = fcos_get_deltas_from_locations(
+          #     locations, matched_gt_boxes_batch[level_name], self.backbone.fpn_strides[level_name])
+
+        
+        # # Replace "pass" statement with your code
+        # for batch in range(gt_boxes.shape[0]):
+        #   matched_gt_deltas_batch = {}
+        #   for level_name, locations in locations_per_fpn_level.items():
+        #     matched_gt_deltas_batch[level_name] = fcos_get_deltas_from_locations(
+        #       locations, matched_gt_boxes[batch][level_name], self.backbone.fpn_strides[level_name])
+        #   matched_gt_deltas.append(matched_gt_deltas_batch)
         ######################################################################
         #                           END OF YOUR CODE                         #
         ######################################################################
