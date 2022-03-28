@@ -86,9 +86,13 @@ class RPNPredictionNetwork(nn.Module):
         # Replace these lines with your code, keep variable names unchanged.
         # Objectness conv
         self.pred_obj = nn.Conv2d(prev_out, num_anchors, kernel_size=1, stride=1)
+        nn.init.normal_(self.pred_obj.weight, 0, 0.01) 
+        nn.init.constant_(self.pred_obj.bias, 0) 
 
         # Box regression conv
         self.pred_box = nn.Conv2d(prev_out, 4 * num_anchors, kernel_size=1, stride=1)
+        nn.init.normal_(self.pred_box.weight, 0, 0.01) 
+        nn.init.constant_(self.pred_box.bias, 0) 
         ######################################################################
         #                           END OF YOUR CODE                         #
         ######################################################################
@@ -377,7 +381,7 @@ def rcnn_get_deltas_from_anchors(
     deltas[:, 2] = torch.log(bw / pw)
     deltas[:, 3] = torch.log(bh / ph)
 
-    deltas[gt_boxes[:, 4] <= -1] = -1e8
+    deltas[gt_boxes[:, :4].sum(dim=1) == -4] = -1e8
     ##########################################################################
     #                             END OF YOUR CODE                           #
     ##########################################################################
@@ -427,7 +431,7 @@ def rcnn_apply_deltas_to_anchors(
     output_boxes[:, 2] = bx + bw / 2
     output_boxes[:, 3] = by + bh / 2
 
-    output_boxes[deltas[:, 0] <= -1] = -1e8
+    output_boxes[deltas[:, 0] == -1e8] = -1e8
     ##########################################################################
     #                             END OF YOUR CODE                           #
     ##########################################################################
